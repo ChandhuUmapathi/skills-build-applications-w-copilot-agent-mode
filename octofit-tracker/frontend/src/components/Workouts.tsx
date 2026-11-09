@@ -1,11 +1,32 @@
-import { useApiData } from '../api/useApiData.js';
+import { useEffect, useState } from 'react';
+import { getJson } from '../api/client.js';
 
 type WorkoutSuggestion = { title: string; reason?: string };
 
 export default function Workouts() {
   const userEmail = 'mona@example.com';
   const path = `/api/workouts/suggestions/${encodeURIComponent(userEmail)}`;
-  const { data, loading, error } = useApiData<{ suggestions: WorkoutSuggestion[] }>(path);
+  const [suggestions, setSuggestions] = useState<WorkoutSuggestion[]>();
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string>();
+
+  useEffect(() => {
+    let active = true;
+    getJson<{ suggestions: WorkoutSuggestion[] }>(path)
+      .then(({ suggestions: result }) => {
+        if (active) setSuggestions(result);
+      })
+      .catch((cause: unknown) => {
+        if (active) setError(cause instanceof Error ? cause.message : 'Unable to load workout suggestions.');
+      })
+      .finally(() => {
+        if (active) setLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [path]);
 
   return (
     <section className="card h-100">
@@ -14,10 +35,10 @@ export default function Workouts() {
         <p>Recommend workouts from activity patterns.</p>
         {loading && <p role="status">Loading workout suggestions...</p>}
         {error && <p role="alert">Unable to load workout suggestions: {error}</p>}
-        {!loading && !error && data?.suggestions.length === 0 && <p role="status">No workout suggestions yet.</p>}
-        {!loading && !error && data && data.suggestions.length > 0 && (
+        {!loading && !error && suggestions?.length === 0 && <p role="status">No workout suggestions yet.</p>}
+        {!loading && !error && suggestions && suggestions.length > 0 && (
           <ul>
-            {data.suggestions.map((suggestion) => (
+            {suggestions.map((suggestion) => (
               <li key={suggestion.title}>
                 <strong>{suggestion.title}</strong>
                 {suggestion.reason && <p>{suggestion.reason}</p>}
