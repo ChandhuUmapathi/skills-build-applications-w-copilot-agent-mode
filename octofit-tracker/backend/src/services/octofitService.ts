@@ -68,11 +68,56 @@ export async function createTeam(input: unknown) {
 }
 
 export async function getLeaderboard() {
-  return [];
+  const [teams, totals] = await Promise.all([
+    Team.find().lean(),
+    Activity.aggregate([
+      { $group: { _id: '$team', totalPoints: { $sum: '$points' } } },
+    ]),
+  ]);
+  const pointsByTeam = new Map(totals.map(({ _id, totalPoints }) => [_id.toString(), totalPoints]));
+  return teams
+    .map((team) => ({ teamName: team.name, totalPoints: pointsByTeam.get(team._id.toString()) ?? 0 }))
+    .sort((left, right) => right.totalPoints - left.totalPoints || left.teamName.localeCompare(right.teamName))
+    .map((team, index) => ({ ...team, rank: index + 1 }));
 }
 
-export async function suggestWorkouts(_userEmail: string) {
-  return Workout.find().limit(1).lean();
+function normalizeFocus(value: string) {
+  const normalized = value.trim().toLowerCase();
+  if (['run', 'running', 'cycle', 'cycling', 'walk', 'walking', 'cardio'].includes(normalized)) return 'endurance';
+  if (['lift', 'lifting', 'weights'].includes(normalized)) return 'strength';
+  return normalized;
+}
+
+export async function suggestWorkouts(userEmail: string) {
+  const user = await User.findOne({ email: userEmail }).lean();
+  if (!user) {
+    throw Object.assign(new Error('User not found'), { status: 404 });
+  }
+
+  const [recentActivity, workouts] = await Promise.all([
+    Activity.findOne({ user: user._id }).sort({ occurredAt: -1, _id: -1 }).lean(),
+    Workout.find().lean(),
+  ]);
+  const goalFocus = normalizeFocus(user.fitnessGoal);
+  const activityFocus = recentActivity ? normalizeFocus(recentActivity.type) : undefined;
+
+  return workouts
+    .map((workout) => {
+      const focus = normalizeFocus(workout.focus);
+      const matchesGoal = focus === goalFocus;
+      const matchesActivity = activityFocus !== undefined && focus === activityFocus;
+      return { workout, matchesGoal, matchesActivity };
+    })
+    .filter(({ matchesGoal, matchesActivity }) => matchesGoal || matchesActivity)
+    .sort((left, right) => Number(right.matchesGoal) - Number(left.matchesGoal))
+    .map(({ workout, matchesGoal, matchesActivity }) => {
+      const reason = matchesGoal && matchesActivity
+        ? `This workout matches your ${user.fitnessGoal} goal and recent ${recentActivity?.type} activity.`
+        : matchesGoal
+          ? `This workout matches your ${user.fitnessGoal} fitness goal.`
+          : `This workout complements your recent ${recentActivity?.type} activity.`;
+      return { ...workout, reason };
+    });
 }
 
 export { User };
